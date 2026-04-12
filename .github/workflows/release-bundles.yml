@@ -36,7 +36,17 @@ jobs:
         shell: pwsh
         run: |
           $vcpkg = "${env:OPENV_VCPKG_ROOT}\vcpkg.exe"
-          & $vcpkg install glew:${env:VCPKG_TRIPLET} glfw3:${env:VCPKG_TRIPLET} raylib:${env:VCPKG_TRIPLET} opencv4:${env:VCPKG_TRIPLET} onnxruntime:${env:VCPKG_TRIPLET}
+          $args = @("install", "glew:${env:VCPKG_TRIPLET}", "glfw3:${env:VCPKG_TRIPLET}", "raylib:${env:VCPKG_TRIPLET}", "opencv4:${env:VCPKG_TRIPLET}", "onnxruntime:${env:VCPKG_TRIPLET}")
+          $attempts = 3
+          for ($i = 1; $i -le $attempts; $i++) {
+            & $vcpkg @args
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($i -eq $attempts) {
+              Write-Error "vcpkg install failed after $attempts attempts"
+              exit $LASTEXITCODE
+            }
+            Start-Sleep -Seconds (20 * $i)
+          }
 
       - name: Validate Cubism Core Windows lib exists
         shell: pwsh
@@ -149,12 +159,22 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf autoconf-archive automake libtool
+          sudo apt-get install -y autoconf autoconf-archive automake libtool libltdl-dev
 
       - name: Install native deps (vcpkg)
         shell: bash
         run: |
-          "${OPENV_VCPKG_ROOT}/vcpkg" install glew:${VCPKG_TRIPLET} glfw3:${VCPKG_TRIPLET} raylib:${VCPKG_TRIPLET} opencv4:${VCPKG_TRIPLET} onnxruntime:${VCPKG_TRIPLET}
+          attempts=3
+          for i in $(seq 1 $attempts); do
+            if "${OPENV_VCPKG_ROOT}/vcpkg" install glew:${VCPKG_TRIPLET} glfw3:${VCPKG_TRIPLET} raylib:${VCPKG_TRIPLET} opencv4:${VCPKG_TRIPLET} onnxruntime:${VCPKG_TRIPLET}; then
+              break
+            fi
+            if [[ "$i" -eq "$attempts" ]]; then
+              echo "vcpkg install failed after ${attempts} attempts" >&2
+              exit 1
+            fi
+            sleep $((20 * i))
+          done
 
       - name: Configure renderer (CMake)
         shell: bash

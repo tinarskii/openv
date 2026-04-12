@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live2D Knight - Pixi v7</title>
+    <script src="https://cdn.jsdelivr.net/npm/live2dcubismcore@1.0.2/live2d.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/live2dcubismcore@1.0.2/live2dcubismcore.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/index.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #1a1a1a; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <p id="debug"></p>
+    <script>
+        (async function() {
+            const app = new PIXI.Application({
+                backgroundAlpha: 0,
+                resizeTo: window,
+                antialias: true,
+                hello: false
+            });
+            document.body.appendChild(app.view);
+
+            let model;
+            let targetParams = { angleX: 0, angleY: 0, angleZ: 0, mouthOpen: 0 };
+
+            try {
+                model = await PIXI.live2d.Live2DModel.from("assets/testmodel/IceGirl.model3.json");
+                app.stage.addChild(model);
+                
+                model.anchor.set(0.5);
+                model.scale.set(0.2);
+                model.x = window.innerWidth / 2;
+                model.y = window.innerHeight / 2;
+            } catch (err) {
+                console.error(err);
+            }
+
+            function connectWS() {
+                const socket = new WebSocket(`ws://${window.location.host}`);
+                socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        targetParams.angleX = data.angleX || 0;
+                        targetParams.angleY = data.angleY || 0;
+                        targetParams.angleZ = data.angleZ || 0;
+                        targetParams.mouthOpen = data.mouthOpen || 0;
+                        document.getElementById('debug').textContent = JSON.stringify(data);
+                    } catch (e) {
+                        console.error(e);
+                    }
+                };
+                socket.onclose = () => setTimeout(connectWS, 2000);
+            }
+            connectWS();
+
+            app.ticker.add((delta) => {
+                if (!model || !model.internalModel) return;
+                
+                const core = model.internalModel.coreModel;
+                const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
+                const speed = 0.15 * delta
+
+                const update = (id, target) => {
+                    const cur = core.getParameterValueById(id);
+                    core.setParameterValueById(id, lerp(cur, target, speed));
+                };
+
+                update('ParamAngleX', targetParams.angleX);
+                update('ParamAngleY', targetParams.angleY);
+                update('ParamAngleZ', targetParams.angleZ);
+                update('ParamMouthOpenY', targetParams.mouthOpen);
+            });
+
+            window.addEventListener('resize', () => {
+                if (model) {
+                    model.x = window.innerWidth / 2;
+                    model.y = window.innerHeight / 2;
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

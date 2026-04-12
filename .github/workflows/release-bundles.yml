@@ -1,0 +1,198 @@
+name: release-bundles
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      BUILD_TYPE: Release
+      VCPKG_TRIPLET: x64-windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.2.8"
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          runVcpkgInstall: false
+
+      - name: Install native deps (vcpkg)
+        shell: pwsh
+        run: |
+          $vcpkg = "${env:VCPKG_INSTALLATION_ROOT}\vcpkg.exe"
+          & $vcpkg install glew:${env:VCPKG_TRIPLET} glfw3:${env:VCPKG_TRIPLET} raylib:${env:VCPKG_TRIPLET} opencv4:${env:VCPKG_TRIPLET} onnxruntime:${env:VCPKG_TRIPLET}
+
+      - name: Validate Cubism Core Windows lib exists
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "CubismSdkForNative/Core/lib/windows/x86_64/Live2DCubismCore.lib",
+            "CubismSdkForNative/Core/lib/windows/x86_64/libLive2DCubismCore.a"
+          )
+          $found = $false
+          foreach ($p in $candidates) {
+            if (Test-Path $p) { $found = $true; break }
+          }
+          if (-not $found) {
+            Write-Error "Missing Cubism Windows Core library. Add one of: $($candidates -join ', ')"
+            exit 1
+          }
+
+      - name: Configure renderer (CMake)
+        shell: pwsh
+        run: |
+          cmake -S . -B build-win -G Ninja `
+            -DCMAKE_BUILD_TYPE=${env:BUILD_TYPE} `
+            -DCMAKE_TOOLCHAIN_FILE="${env:VCPKG_INSTALLATION_ROOT}\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=${env:VCPKG_TRIPLET} `
+            -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
+
+      - name: Build renderer (openv.exe)
+        shell: pwsh
+        run: cmake --build build-win --config ${env:BUILD_TYPE}
+
+      - name: Build facecap (openv-facecap.exe)
+        shell: pwsh
+        run: |
+          $root = "${env:VCPKG_INSTALLATION_ROOT}\installed\${env:VCPKG_TRIPLET}"
+          $opencvLib = Get-ChildItem -Path "$root\lib\opencv_world*.lib" | Select-Object -First 1
+          if (-not $opencvLib) {
+            Write-Error "Could not find opencv_world*.lib under $root\lib"
+            exit 1
+          }
+          if (-not (Test-Path "$root\lib\onnxruntime.lib")) {
+            Write-Error "Could not find onnxruntime.lib under $root\lib"
+            exit 1
+          }
+
+          nim cpp `
+            --cc:vcc `
+            --os:windows `
+            --cpu:amd64 `
+            --threads:on `
+            --skipProjCfg:on `
+            --out:bin/openv-facecap.exe `
+            --passC:"/I$root\include" `
+            --passL:"/LIBPATH:$root\lib onnxruntime.lib $($opencvLib.Name)" `
+            src/openv.nim
+
+      - name: Stage Windows bundle
+        shell: pwsh
+        run: |
+          $root = "${env:VCPKG_INSTALLATION_ROOT}\installed\${env:VCPKG_TRIPLET}"
+          Remove-Item -Recurse -Force dist-win -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path dist-win\essentials | Out-Null
+          New-Item -ItemType Directory -Force -Path dist-win\essentials\dll | Out-Null
+
+          Copy-Item build-win/openv.exe dist-win/openv.exe -Force
+          Copy-Item bin/openv-facecap.exe dist-win/openv-facecap.exe -Force
+          Copy-Item -Recurse -Force build-win/Resources dist-win/Resources
+          if (Test-Path build-win/SampleShaders) { Copy-Item -Recurse -Force build-win/SampleShaders dist-win/essentials/SampleShaders }
+          if (Test-Path build-win/FrameworkShaders) { Copy-Item -Recurse -Force build-win/FrameworkShaders dist-win/essentials/FrameworkShaders }
+          Copy-Item -Recurse -Force model dist-win/model
+          Copy-Item -Recurse -Force assets dist-win/essentials/assets
+
+          $dllPatterns = @("onnxruntime*.dll", "opencv_world*.dll", "glew32.dll", "glfw3.dll", "raylib.dll")
+          foreach ($p in $dllPatterns) {
+            Get-ChildItem -Path "$root\bin" -Filter $p -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item $_.FullName dist-win/essentials/dll -Force
+            }
+          }
+
+          Compress-Archive -Path dist-win\* -DestinationPath openv-windows.zip -Force
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: openv-windows
+          path: openv-windows.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: Release
+      VCPKG_TRIPLET: x64-linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.2.8"
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          runVcpkgInstall: false
+
+      - name: Install native deps (vcpkg)
+        shell: bash
+        run: |
+          "${VCPKG_INSTALLATION_ROOT}/vcpkg" install glew:${VCPKG_TRIPLET} glfw3:${VCPKG_TRIPLET} raylib:${VCPKG_TRIPLET} opencv4:${VCPKG_TRIPLET} onnxruntime:${VCPKG_TRIPLET}
+
+      - name: Configure renderer (CMake)
+        shell: bash
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+            -DCMAKE_TOOLCHAIN_FILE="${VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="${VCPKG_TRIPLET}" \
+            -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
+
+      - name: Build renderer (openv)
+        shell: bash
+        run: cmake --build build-linux -j"$(nproc)"
+
+      - name: Build facecap (openv-facecap)
+        shell: bash
+        run: |
+          root="${VCPKG_INSTALLATION_ROOT}/installed/${VCPKG_TRIPLET}"
+          opencv_world="$(ls "$root/lib"/libopencv_world*.so* 2>/dev/null | head -n1 || true)"
+          if [[ -n "$opencv_world" ]]; then
+            opencv_libs="-L$root/lib -l:$(basename "$opencv_world")"
+          else
+            opencv_libs="-L$root/lib $(find "$root/lib" -maxdepth 1 -name 'libopencv_*.so*' -printf '-l:%f ' || true)"
+          fi
+          nim cpp \
+            --threads:on \
+            --skipProjCfg:on \
+            --out:bin/openv-facecap \
+            --passC:"-I$root/include -I$root/include/opencv4" \
+            --passL:"-L$root/lib -lonnxruntime ${opencv_libs}" \
+            src/openv.nim
+
+      - name: Stage Linux bundle
+        shell: bash
+        run: |
+          root="${VCPKG_INSTALLATION_ROOT}/installed/${VCPKG_TRIPLET}"
+          rm -rf dist-linux
+          mkdir -p dist-linux/essentials/lib
+          cp -f build-linux/openv dist-linux/openv
+          cp -f bin/openv-facecap dist-linux/openv-facecap
+          cp -r build-linux/Resources dist-linux/Resources
+          [[ -d build-linux/SampleShaders ]] && cp -r build-linux/SampleShaders dist-linux/essentials/SampleShaders || true
+          [[ -d build-linux/FrameworkShaders ]] && cp -r build-linux/FrameworkShaders dist-linux/essentials/FrameworkShaders || true
+          cp -r model dist-linux/model
+          cp -r assets dist-linux/essentials/assets
+          find "$root/lib" -maxdepth 1 -type f \( -name 'libonnxruntime.so*' -o -name 'libopencv*.so*' -o -name 'libGLEW*.so*' -o -name 'libglfw*.so*' -o -name 'libraylib*.so*' \) -exec cp -f {} dist-linux/essentials/lib/ \;
+          (cd dist-linux && zip -r ../openv-linux.zip .)
+
+      - name: Upload Linux zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: openv-linux
+          path: openv-linux.zip

@@ -23,9 +23,10 @@ find_package(OpenGL REQUIRED)
 # --- Cubism Core ---
 add_library(Live2DCubismCore STATIC IMPORTED)
 if(WIN32)
-    set(CUBISM_CORE_CANDIDATE_LIBS
-        ${CORE_PATH}/lib/windows/x86_64/Live2DCubismCore.lib
-        ${CORE_PATH}/lib/windows/x86_64/libLive2DCubismCore.a
+    file(GLOB_RECURSE CUBISM_CORE_CANDIDATE_LIBS
+        "${CORE_PATH}/lib/windows/x86_64/Live2DCubismCore*.lib"
+        "${CORE_PATH}/lib/windows/x86_64/libLive2DCubismCore*.a"
+        "${CORE_PATH}/dll/windows/x86_64/Live2DCubismCore*.lib"
     )
     set(CUBISM_CORE_LIB "")
     foreach(_lib ${CUBISM_CORE_CANDIDATE_LIBS})
@@ -35,7 +36,7 @@ if(WIN32)
         endif()
     endforeach()
     if(CUBISM_CORE_LIB STREQUAL "")
-        message(FATAL_ERROR "Windows Cubism Core library not found. Expected one of: ${CUBISM_CORE_CANDIDATE_LIBS}")
+        message(FATAL_ERROR "Windows Cubism Core library not found under ${CORE_PATH}/lib/windows/x86_64 or ${CORE_PATH}/dll/windows/x86_64. Expected Live2DCubismCore*.lib or libLive2DCubismCore*.a")
     endif()
 else()
     set(CUBISM_CORE_LIB ${CORE_PATH}/lib/linux/x86_64/libLive2DCubismCore.a)

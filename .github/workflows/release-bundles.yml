@@ -20,16 +20,16 @@ jobs:
       - name: Validate Cubism Core Windows lib exists
         shell: pwsh
         run: |
-          $candidates = @(
-            "CubismSdkForNative/Core/lib/windows/x86_64/Live2DCubismCore.lib",
-            "CubismSdkForNative/Core/lib/windows/x86_64/libLive2DCubismCore.a"
+          $roots = @(
+            "CubismSdkForNative/Core/lib/windows/x86_64",
+            "CubismSdkForNative/Core/dll/windows/x86_64"
           )
-          $found = $false
-          foreach ($p in $candidates) {
-            if (Test-Path $p) { $found = $true; break }
-          }
-          if (-not $found) {
-            Write-Error "Missing Cubism Windows Core library. Add one of: $($candidates -join ', ')"
+          $candidates = @(
+            Get-ChildItem -Path $roots -Recurse -File -Filter "Live2DCubismCore*.lib" -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $roots -Recurse -File -Filter "libLive2DCubismCore*.a" -ErrorAction SilentlyContinue
+          ) | Where-Object { $_ -ne $null }
+          if (-not $candidates -or $candidates.Count -eq 0) {
+            Write-Error "Missing Cubism Windows Core library under $($roots -join ', ') (expected Live2DCubismCore*.lib or libLive2DCubismCore*.a)"
             exit 1
           }
 
@@ -52,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $vcpkg = "${env:OPENV_VCPKG_ROOT}\vcpkg.exe"
-          $args = @("install", "glew:${env:VCPKG_TRIPLET}", "glfw3:${env:VCPKG_TRIPLET}", "raylib:${env:VCPKG_TRIPLET}", "opencv4[core,dnn,imgproc,objdetect,videoio]:${env:VCPKG_TRIPLET}", "onnxruntime:${env:VCPKG_TRIPLET}")
+          $args = @("install", "glew:${env:VCPKG_TRIPLET}", "glfw3:${env:VCPKG_TRIPLET}", "raylib:${env:VCPKG_TRIPLET}", "opencv4[calib3d,dnn,fs,intrinsics,thread,jpeg,png,tiff,webp]:${env:VCPKG_TRIPLET}", "onnxruntime:${env:VCPKG_TRIPLET}")
           $attempts = 3
           for ($i = 1; $i -le $attempts; $i++) {
             & $vcpkg @args
@@ -132,6 +132,11 @@ jobs:
             }
           }
 
+          $cubismDll = Get-ChildItem -Path "CubismSdkForNative/Core/dll/windows/x86_64" -Recurse -File -Filter "Live2DCubismCore.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($cubismDll) {
+            Copy-Item $cubismDll.FullName dist-win/essentials/dll/Live2DCubismCore.dll -Force
+          }
+
           Compress-Archive -Path dist-win\* -DestinationPath openv-windows.zip -Force
 
       - name: Upload Windows zip
@@ -173,7 +178,7 @@ jobs:
         run: |
           attempts=3
           for i in $(seq 1 $attempts); do
-            if "${OPENV_VCPKG_ROOT}/vcpkg" install glew:${VCPKG_TRIPLET} glfw3:${VCPKG_TRIPLET} raylib:${VCPKG_TRIPLET} opencv4[core,dnn,imgproc,objdetect,videoio]:${VCPKG_TRIPLET} onnxruntime:${VCPKG_TRIPLET}; then
+            if "${OPENV_VCPKG_ROOT}/vcpkg" install glew:${VCPKG_TRIPLET} glfw3:${VCPKG_TRIPLET} raylib:${VCPKG_TRIPLET} opencv4[calib3d,dnn,fs,intrinsics,thread,jpeg,png,tiff,webp]:${VCPKG_TRIPLET} onnxruntime:${VCPKG_TRIPLET}; then
               break
             fi
             if [[ "$i" -eq "$attempts" ]]; then

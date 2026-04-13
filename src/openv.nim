@@ -9,6 +9,7 @@ const CAP_PROP_FRAME_WIDTH = 3
 const CAP_PROP_FRAME_HEIGHT = 4
 const CAP_PROP_BUFFERSIZE = 38
 const DEBUG_DRAW = false
+const SHOW_PREVIEW = false
 const DETECT_EVERY_N_FRAMES = 3
 
 when defined(windows):
@@ -153,7 +154,8 @@ if isMainModule:
   var hasFace = false
   var missedDetections = 0
 
-  namedWindow("Frame", 1)
+  if SHOW_PREVIEW:
+    namedWindow("Frame", 1)
 
   while true:
     frameCount.inc
@@ -180,8 +182,9 @@ if isMainModule:
         missedDetections.inc
         if missedDetections >= 5:
           hasFace = false
-          imshow("Frame", frame)
-          if waitKey(1) == 27: break
+          if SHOW_PREVIEW:
+            imshow("Frame", frame)
+            if waitKey(1) == 27: break
           continue
         x0 = smoothX0.int
         y0 = smoothY0.int
@@ -304,8 +307,10 @@ if isMainModule:
         let y = lmk[i][1].int
         circle(frame, newPoint(x.cint, y.cint), 2.cint, newScalar(0, 0, 255), -1.cint)
 
-    imshow("Frame", frame)
-    if waitKey(1) == 27: break
+    if SHOW_PREVIEW:
+      imshow("Frame", frame)
+      if waitKey(1) == 27: break
 
   cap.release()
-  destroyAllWindows()
+  if SHOW_PREVIEW:
+    destroyAllWindows()

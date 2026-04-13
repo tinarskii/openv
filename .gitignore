@@ -1,6 +1,5 @@
 build/
 bin/
-CubismSdkForNative/
 model/
 assets/testmodel/
 build-*

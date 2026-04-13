@@ -17,6 +17,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate Cubism Core Windows lib exists
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "CubismSdkForNative/Core/lib/windows/x86_64/Live2DCubismCore.lib",
+            "CubismSdkForNative/Core/lib/windows/x86_64/libLive2DCubismCore.a"
+          )
+          $found = $false
+          foreach ($p in $candidates) {
+            if (Test-Path $p) { $found = $true; break }
+          }
+          if (-not $found) {
+            Write-Error "Missing Cubism Windows Core library. Add one of: $($candidates -join ', ')"
+            exit 1
+          }
+
       - name: Setup MSVC toolchain
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -36,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $vcpkg = "${env:OPENV_VCPKG_ROOT}\vcpkg.exe"
-          $args = @("install", "glew:${env:VCPKG_TRIPLET}", "glfw3:${env:VCPKG_TRIPLET}", "raylib:${env:VCPKG_TRIPLET}", "opencv4:${env:VCPKG_TRIPLET}", "onnxruntime:${env:VCPKG_TRIPLET}")
+          $args = @("install", "glew:${env:VCPKG_TRIPLET}", "glfw3:${env:VCPKG_TRIPLET}", "raylib:${env:VCPKG_TRIPLET}", "opencv4[core,dnn,imgproc,objdetect,videoio]:${env:VCPKG_TRIPLET}", "onnxruntime:${env:VCPKG_TRIPLET}")
           $attempts = 3
           for ($i = 1; $i -le $attempts; $i++) {
             & $vcpkg @args
@@ -46,22 +62,6 @@ jobs:
               exit $LASTEXITCODE
             }
             Start-Sleep -Seconds (20 * $i)
-          }
-
-      - name: Validate Cubism Core Windows lib exists
-        shell: pwsh
-        run: |
-          $candidates = @(
-            "CubismSdkForNative/Core/lib/windows/x86_64/Live2DCubismCore.lib",
-            "CubismSdkForNative/Core/lib/windows/x86_64/libLive2DCubismCore.a"
-          )
-          $found = $false
-          foreach ($p in $candidates) {
-            if (Test-Path $p) { $found = $true; break }
-          }
-          if (-not $found) {
-            Write-Error "Missing Cubism Windows Core library. Add one of: $($candidates -join ', ')"
-            exit 1
           }
 
       - name: Configure renderer (CMake)
@@ -81,10 +81,17 @@ jobs:
         shell: pwsh
         run: |
           $root = "${env:OPENV_VCPKG_ROOT}\installed\${env:VCPKG_TRIPLET}"
-          $opencvLib = Get-ChildItem -Path "$root\lib\opencv_world*.lib" | Select-Object -First 1
-          if (-not $opencvLib) {
-            Write-Error "Could not find opencv_world*.lib under $root\lib"
-            exit 1
+          $opencvLib = Get-ChildItem -Path "$root\lib\opencv_world*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $opencvLinkArgs = ""
+          if ($opencvLib) {
+            $opencvLinkArgs = $opencvLib.Name
+          } else {
+            $opencvLibs = Get-ChildItem -Path "$root\lib\opencv_*.lib" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch "d\.lib$" }
+            if (-not $opencvLibs) {
+              Write-Error "Could not find OpenCV import libs under $root\lib"
+              exit 1
+            }
+            $opencvLinkArgs = ($opencvLibs | ForEach-Object { $_.Name }) -join " "
           }
           if (-not (Test-Path "$root\lib\onnxruntime.lib")) {
             Write-Error "Could not find onnxruntime.lib under $root\lib"
@@ -99,7 +106,7 @@ jobs:
             --skipProjCfg:on `
             --out:bin/openv-facecap.exe `
             --passC:"/I$root\include" `
-            --passL:"/LIBPATH:$root\lib onnxruntime.lib $($opencvLib.Name)" `
+            --passL:"/LIBPATH:$root\lib onnxruntime.lib $opencvLinkArgs" `
             src/openv.nim
 
       - name: Stage Windows bundle
@@ -118,7 +125,7 @@ jobs:
           Copy-Item -Recurse -Force model dist-win/model
           Copy-Item -Recurse -Force assets dist-win/essentials/assets
 
-          $dllPatterns = @("onnxruntime*.dll", "opencv_world*.dll", "glew32.dll", "glfw3.dll", "raylib.dll")
+          $dllPatterns = @("onnxruntime*.dll", "opencv_world*.dll", "opencv_*.dll", "glew32.dll", "glfw3.dll", "raylib.dll")
           foreach ($p in $dllPatterns) {
             Get-ChildItem -Path "$root\bin" -Filter $p -ErrorAction SilentlyContinue | ForEach-Object {
               Copy-Item $_.FullName dist-win/essentials/dll -Force
@@ -166,7 +173,7 @@ jobs:
         run: |
           attempts=3
           for i in $(seq 1 $attempts); do
-            if "${OPENV_VCPKG_ROOT}/vcpkg" install glew:${VCPKG_TRIPLET} glfw3:${VCPKG_TRIPLET} raylib:${VCPKG_TRIPLET} opencv4:${VCPKG_TRIPLET} onnxruntime:${VCPKG_TRIPLET}; then
+            if "${OPENV_VCPKG_ROOT}/vcpkg" install glew:${VCPKG_TRIPLET} glfw3:${VCPKG_TRIPLET} raylib:${VCPKG_TRIPLET} opencv4[core,dnn,imgproc,objdetect,videoio]:${VCPKG_TRIPLET} onnxruntime:${VCPKG_TRIPLET}; then
               break
             fi
             if [[ "$i" -eq "$attempts" ]]; then
